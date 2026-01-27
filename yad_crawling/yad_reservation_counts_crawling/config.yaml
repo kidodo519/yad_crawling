@@ -1,0 +1,35 @@
+db:
+ host: xxxxx
+ port: 5432
+ user: user_sankoh_insert
+ password: xxxxx
+ database: reservation_db_sankoh
+
+code:
+ ken_code:
+  兵庫県: '280000'
+ area_code:
+  城崎・竹野・豊岡: '281100'
+  姫路・赤穂・播磨: '280800'
+  神戸・有馬・明石: '280200'
+  淡路島: '281700'
+
+mappings:
+  reservation_counts:
+    string:
+      area_name: "エリア名"
+      facility_name: "宿名"
+    integer:
+      facility_outer_id: "宿番号"
+      number_of_reservations: "予約件数"
+    date:
+      acquisition_date: "予約日"
+
+settings:
+  driver_path: C:\Users\rparobot\Desktop\incraze-data-uploaders\dist\chromedriver-win32\chromedriver.exe
+  csv_download: false
+  db_import: true
+
+webhook:
+ name: bot_sankoh
+ url: xxxx
