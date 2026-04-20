@@ -30,11 +30,11 @@ def mid(text, n, m):
 
 def post_webhook(config, content, status):
         if status == 'error':
-                requests.post(config['webhook']['url'], json={
+                requests.post(config['webhook']['error']['url'], json={
                 'text': content
                 })
         else:
-                requests.post(config['webhook']['url'], json={
+                requests.post(config['webhook']['success']['url'], json={
                 'text': content
                 })
 
