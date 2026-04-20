@@ -28,10 +28,15 @@ def remove_between_strings(input_string, start_string, end_string):
 def mid(text, n, m):
         return text[n-1:n+m-1]
 
-def post_webhook(config, content):
-    requests.post(config['webhook']['url'], json={
-        'text': content
-    })
+def post_webhook(config, content, status):
+        if status == 'error':
+                requests.post(config['webhook']['url'], json={
+                'text': content
+                })
+        else:
+                requests.post(config['webhook']['url'], json={
+                'text': content
+                })
 
 def make_record_from_row(row, mapping):
     ret = {}
@@ -73,7 +78,7 @@ for ac in list(config['code']['area_code']):
         area_code = format(config['code']['area_code'][ac], '06')
         area_name = str(ac)
         print('エリアCD: ' + str(area_code))
-        mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1'
+        mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1&yadHb=1'
         getdata1 = requests.get(mainURL)
 
         soup = BeautifulSoup(getdata1.content, "html.parser")
@@ -86,7 +91,7 @@ for ac in list(config['code']['area_code']):
 
                 #ページごとに宿番号取得
                 for i in range(1, page_count+1):
-                        page_URL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/page{i}.html?screenId=UWW1402&distCd=01&activeSort=0&mvTabFlg=1&rootCd=04&stayYear=&stayMonth=&stayDay=&stayCount=1&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&kenCd={prefecture_code}&lrgCd={area_code}&vosFlg=6&idx={(i-1)*30}&yadRk=1'
+                        page_URL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/page{i}.html?screenId=UWW1402&distCd=01&activeSort=0&mvTabFlg=1&rootCd=04&stayYear=&stayMonth=&stayDay=&stayCount=1&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&kenCd={prefecture_code}&lrgCd={area_code}&vosFlg=6&idx={(i-1)*30}&yadRk=1&yadHb=1'
                         getdata_page = requests.get(page_URL)
                         soup_page = BeautifulSoup(getdata_page.content, "html.parser")
                         elems_yad_num = soup_page.find_all(class_='jlnpc-yadoCassette__link')
@@ -152,7 +157,7 @@ print('予約件数取得開始')
 
 driver_path = config['settings']['driver_path']
 options = Options()
-options.add_argument('--headless')
+# options.add_argument('--headless')
 driver = webdriver.Chrome(service=ChromeService(driver_path))
 # driver.maximize_window()
 
@@ -217,7 +222,7 @@ if config['settings']['db_import']:
         )
 
         mapping_keys = ', '.join(ordered_keys)
-        table_name = 'area_facility_reservation_counts'
+        table_name = 'crawling_reservation_counts'
         table_insert_query = f'INSERT INTO {table_name}({mapping_keys}) VALUES %s'
 
         try:
@@ -229,11 +234,11 @@ if config['settings']['db_import']:
                         
                 extras.execute_values(cursor, table_insert_query, buf)
                 conn.commit()           
-                post_webhook(config, f'予約数クローリング: DBにインポートしました。 (レコード数: {n_records})')
+                post_webhook(config, f'予約数クローリング: DBにインポートしました。 (レコード数: {n_records})', 'success')
 
         except Exception as ex:
                 msg = traceback.format_exc()
-                post_webhook(config, f'予約数クローリング: インポート実行中にエラー: {msg}')
+                post_webhook(config, f'予約数クローリング: インポート実行中にエラー: {msg}', 'error')
                 print(msg)
                 conn.rollback()
                 exit(1)

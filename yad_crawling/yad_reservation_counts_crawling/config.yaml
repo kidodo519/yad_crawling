@@ -1,9 +1,9 @@
 db:
- host: xxxxx
+ host: xxxxxx
  port: 5432
- user: user_sankoh_insert
- password: xxxxx
- database: reservation_db_sankoh
+ user: user_crawling_insert
+ password: xxxx
+ database: crawling_jln
 
 code:
  ken_code:
@@ -26,10 +26,15 @@ mappings:
       acquisition_date: "予約日"
 
 settings:
-  driver_path: C:\Users\rparobot\Desktop\incraze-data-uploaders\dist\chromedriver-win32\chromedriver.exe
+  # driver_path: C:\Users\kifunosato\Desktop\program\chromedriver-win32\chromedriver.exe
+  driver_path: C:\Users\kidokoro\Desktop\Program\Python\chromedriver-win32\chromedriver.exe
   csv_download: false
   db_import: true
 
 webhook:
- name: bot_sankoh
- url: xxxx
+  success:
+    name: test
+    url: https://hooks.slack.com/services/xxxx
+  error:
+    name: error_program
+    url: https://hooks.slack.com/services/xxxx
