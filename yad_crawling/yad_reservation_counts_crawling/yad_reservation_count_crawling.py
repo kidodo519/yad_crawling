@@ -15,6 +15,11 @@ from psycopg2 import extras
 import traceback
 import csv
 
+DEFAULT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+}
+
 def remove_between_strings(input_string, start_string, end_string):
     start_index = str(input_string).find(start_string)
     end_index = str(input_string).find(end_string)
@@ -54,6 +59,28 @@ def make_record_from_row(row, mapping):
 
     return ret
 
+
+def build_session(config):
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    override_headers = config.get('settings', {}).get('http_headers', {})
+    if override_headers:
+        session.headers.update(override_headers)
+    return session
+
+
+def fetch_soup(session, url):
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, "html.parser")
+    title = soup.title.get_text(strip=True) if soup.title else ''
+    page_text = soup.get_text(" ", strip=True)
+    if any(k in page_text for k in ['アクセスを制限', '不正アクセス', 'Access Denied', 'captcha', 'reCAPTCHA']):
+        print('警告: アクセス制限の可能性があります')
+        print('URL: ' + url)
+        print('title: ' + title)
+    return soup
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding = 'utf-8')
 
@@ -70,6 +97,8 @@ yado_number = []
 yad_plan_url = []
 res_count = []
 
+session = build_session(config)
+
 #ページ数取得
 print('宿番号取得開始')
 for ac in list(config['code']['area_code']):
@@ -79,9 +108,7 @@ for ac in list(config['code']['area_code']):
         area_name = str(ac)
         print('エリアCD: ' + str(area_code))
         mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1&yadHb=1'
-        getdata1 = requests.get(mainURL)
-
-        soup = BeautifulSoup(getdata1.content, "html.parser")
+        soup = fetch_soup(session, mainURL)
         elems_yad_count = soup.find_all(class_='jlnpc-listInformation--count')
 
         #宿数取得（旅館0の場合pass）
@@ -92,8 +119,7 @@ for ac in list(config['code']['area_code']):
                 #ページごとに宿番号取得
                 for i in range(1, page_count+1):
                         page_URL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/page{i}.html?screenId=UWW1402&distCd=01&activeSort=0&mvTabFlg=1&rootCd=04&stayYear=&stayMonth=&stayDay=&stayCount=1&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&kenCd={prefecture_code}&lrgCd={area_code}&vosFlg=6&idx={(i-1)*30}&yadRk=1&yadHb=1'
-                        getdata_page = requests.get(page_URL)
-                        soup_page = BeautifulSoup(getdata_page.content, "html.parser")
+                        soup_page = fetch_soup(session, page_URL)
                         elems_yad_num = soup_page.find_all(class_='jlnpc-yadoCassette__link')
                         elems_yad_name = soup_page.find_all('h2', class_='p-searchResultItem__facilityName')
                         elems_yad_url = soup_page.find_all(class_='p-searchResultItem__planName')
@@ -157,8 +183,12 @@ print('予約件数取得開始')
 
 driver_path = config['settings']['driver_path']
 options = Options()
-# options.add_argument('--headless')
-driver = webdriver.Chrome(service=ChromeService(driver_path))
+if config.get('settings', {}).get('headless', True):
+        options.add_argument('--headless=new')
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--disable-gpu')
+driver = webdriver.Chrome(service=ChromeService(driver_path), options=options)
 # driver.maximize_window()
 
 for cryn in yado_number:
