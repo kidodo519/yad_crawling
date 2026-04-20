@@ -30,9 +30,13 @@ def dump_response(debug_dir, file_prefix, response):
     soup = BeautifulSoup(response.content, "html.parser")
     title = soup.title.get_text(strip=True) if soup.title else ''
     count_nodes = len(soup.select('.jlnpc-listInformation--count'))
-    yad_nodes = len(soup.select('.jlnpc-yadoCassette__link'))
-    plan_nodes = len(soup.select('.p-searchResultItem__planName'))
+    yad_elements = soup.select('.jlnpc-yadoCassette__link')
+    yad_nodes = len(yad_elements)
+    plan_elements = soup.select('.p-searchResultItem__planName')
+    plan_nodes = len(plan_elements)
     preview = soup.get_text(' ', strip=True)[:500]
+    yad_data_hrefs = [e.get('data-href') for e in yad_elements[:5]]
+    plan_hrefs = [e.get('href') for e in plan_elements[:5]]
 
     with open(meta_path, 'w', encoding='utf-8') as fp:
         fp.write(f'status_code={response.status_code}\n')
@@ -42,6 +46,8 @@ def dump_response(debug_dir, file_prefix, response):
         fp.write(f'yad_nodes={yad_nodes}\n')
         fp.write(f'plan_nodes={plan_nodes}\n')
         fp.write(f'preview={preview}\n')
+        fp.write(f'yad_data_hrefs_sample={yad_data_hrefs}\n')
+        fp.write(f'plan_hrefs_sample={plan_hrefs}\n')
         fp.write('response_headers:\n')
         for k, v in response.headers.items():
             fp.write(f'  {k}: {v}\n')

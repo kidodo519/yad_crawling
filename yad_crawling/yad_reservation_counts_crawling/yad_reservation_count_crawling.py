@@ -15,6 +15,7 @@ from psycopg2 import extras
 import traceback
 import csv
 from urllib.parse import urlparse, parse_qs
+import re
 
 DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -104,6 +105,20 @@ def normalize_code(value, length):
         return None
     return s.zfill(length)
 
+
+def extract_facility_code(raw_url):
+    if not raw_url:
+        return None
+    s = str(raw_url)
+    # /yad123456/, ...?yadNo=123456 などを許容
+    m = re.search(r'yad(?:No=)?(\d{6})', s, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r'(\d{6})', s)
+    if m:
+        return m.group(1)
+    return None
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding = 'utf-8')
 
@@ -117,6 +132,7 @@ today_date = str(datetime.date.today())
 reservation_date = datetime.date.today() + datetime.timedelta(days=-1)
 
 yado_number = []
+yado_seen = set()
 yad_plan_map = {}
 res_count = []
 
@@ -150,13 +166,14 @@ for ac in list(config['code']['area_code']):
                         #data-href属性で宿番号を取得、リストに追加
                         for element1, element2 in zip(elems_yad_num, elems_yad_name):
                                 data_href = element1.get('data-href') or ''
-                                href_values = data_href[4:10] if len(data_href) >= 10 else ''
+                                href_values = extract_facility_code(data_href)
                                 facility_name = get_text_or_empty(element2)
-                                if str.isdigit(href_values):
+                                if href_values is not None and str.isdigit(href_values):
                                         d = {'都道府県CD': prefecture_code, '都道府県': prefecture_name, 'エリアCD': area_code, 'エリア名': area_name,'宿番号': href_values, '宿名': facility_name, 'プランCD':None, '部屋タイプCD':None,'掲載ページ':i}
                                         print(d)
-                                        if d['宿番号'] is not None or d['宿名'] is not None:
+                                        if (d['宿番号'] is not None or d['宿名'] is not None) and d['宿番号'] not in yado_seen:
                                                 yado_number.append(d)
+                                                yado_seen.add(d['宿番号'])
 
                         #href属性でURLから宿番号とプランCDを取得、リストに追加
 
