@@ -14,6 +14,13 @@ import psycopg2
 from psycopg2 import extras
 import traceback
 import csv
+from urllib.parse import urlparse, parse_qs
+import re
+
+DEFAULT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+}
 
 def remove_between_strings(input_string, start_string, end_string):
     start_index = str(input_string).find(start_string)
@@ -54,21 +61,100 @@ def make_record_from_row(row, mapping):
 
     return ret
 
+
+def build_session(config):
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    override_headers = config.get('settings', {}).get('http_headers', {})
+    if override_headers:
+        session.headers.update(override_headers)
+    return session
+
+
+def fetch_soup(session, url):
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, "html.parser")
+    title = soup.title.get_text(strip=True) if soup.title else ''
+    page_text = soup.get_text(" ", strip=True)
+    if any(k in page_text for k in ['アクセスを制限', '不正アクセス', 'Access Denied', 'captcha', 'reCAPTCHA']):
+        print('警告: アクセス制限の可能性があります')
+        print('URL: ' + url)
+        print('title: ' + title)
+    return soup
+
+
+def get_text_or_empty(element):
+    if element is None:
+        return ''
+    return element.get_text(strip=True)
+
+
+def parse_query_params(url):
+    if not url:
+        return {}
+    query = urlparse(url).query
+    return parse_qs(query)
+
+
+def normalize_code(value, length):
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s.isdigit():
+        return None
+    return s.zfill(length)
+
+
+def extract_facility_code(raw_url):
+    if not raw_url:
+        return None
+    s = str(raw_url)
+    # /yad123456/, ...?yadNo=123456 などを許容
+    m = re.search(r'yad(?:No=)?(\d{6})', s, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(r'(\d{6})', s)
+    if m:
+        return m.group(1)
+    return None
+
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(__file__)
+
+
+def load_config():
+    base_path = get_base_path()
+    config_path = os.path.join(base_path, 'config.yaml')
+    with open(config_path, 'r', encoding='utf-8') as fp:
+        config = yaml.safe_load(fp)
+    return base_path, config
+
+
+def parse_count_text(raw_text):
+    if raw_text is None:
+        return 0
+    digits = ''.join(re.findall(r'\d+', str(raw_text)))
+    return int(digits) if digits else 0
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding = 'utf-8')
 
-base_path = os.path.dirname(__file__)
-config_path = os.path.join(base_path, 'config.yaml')
-with open(config_path, 'r', encoding='utf-8') as fp:
-        config = yaml.safe_load(fp)
+base_path, config = load_config()
 
 
 today_date = str(datetime.date.today())
 reservation_date = datetime.date.today() + datetime.timedelta(days=-1)
 
 yado_number = []
-yad_plan_url = []
+yado_seen = set()
+yad_plan_map = {}
 res_count = []
+
+session = build_session(config)
 
 #ページ数取得
 print('宿番号取得開始')
@@ -79,92 +165,91 @@ for ac in list(config['code']['area_code']):
         area_name = str(ac)
         print('エリアCD: ' + str(area_code))
         mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1&yadHb=1'
-        getdata1 = requests.get(mainURL)
-
-        soup = BeautifulSoup(getdata1.content, "html.parser")
+        soup = fetch_soup(session, mainURL)
         elems_yad_count = soup.find_all(class_='jlnpc-listInformation--count')
 
         #宿数取得（旅館0の場合pass）
         if elems_yad_count != []:
-                yado_count = str(elems_yad_count[0]).replace("<span class=\"jlnpc-listInformation--count\">", "").replace("</span>", "")
-                page_count = math.ceil(int(yado_count) / 30)
+                yado_count_text = elems_yad_count[0].get_text(strip=True)
+                yado_count = parse_count_text(yado_count_text)
+                page_count = math.ceil(yado_count / 30) if yado_count > 0 else 0
+                print('宿件数テキスト: ' + str(yado_count_text) + ' / 解析値: ' + str(yado_count))
 
                 #ページごとに宿番号取得
                 for i in range(1, page_count+1):
                         page_URL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/page{i}.html?screenId=UWW1402&distCd=01&activeSort=0&mvTabFlg=1&rootCd=04&stayYear=&stayMonth=&stayDay=&stayCount=1&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&kenCd={prefecture_code}&lrgCd={area_code}&vosFlg=6&idx={(i-1)*30}&yadRk=1&yadHb=1'
-                        getdata_page = requests.get(page_URL)
-                        soup_page = BeautifulSoup(getdata_page.content, "html.parser")
+                        soup_page = fetch_soup(session, page_URL)
                         elems_yad_num = soup_page.find_all(class_='jlnpc-yadoCassette__link')
                         elems_yad_name = soup_page.find_all('h2', class_='p-searchResultItem__facilityName')
                         elems_yad_url = soup_page.find_all(class_='p-searchResultItem__planName')
 
                         #data-href属性で宿番号を取得、リストに追加
-                        for element1, element2 in zip(elems_yad_num, elems_yad_name):
-                                href_values = element1.get('data-href')[4:10]
-                                h2_values = element2.get_text
-                                facility_name = str(h2_values).replace('\n','').replace(' ','').replace('<h2class="js-yadNamep-searchResultItem__facilityName"','').replace(r'\u','').replace('<boundmethodPageElement.get_textof>','').replace('</h2>>','')
-                                if str.isdigit(href_values):
-                                        d = {'都道府県CD': prefecture_code, '都道府県': prefecture_name, 'エリアCD': area_code, 'エリア名': area_name,'宿番号': href_values, '宿名': facility_name, 'プランCD':'', '部屋タイプCD':'','掲載ページ':i}
+                        for idx, element1 in enumerate(elems_yad_num):
+                                data_href = element1.get('data-href') or ''
+                                href_values = extract_facility_code(data_href)
+                                element2 = elems_yad_name[idx] if idx < len(elems_yad_name) else None
+                                facility_name = get_text_or_empty(element2)
+                                if href_values is not None and str.isdigit(href_values):
+                                        d = {'都道府県CD': prefecture_code, '都道府県': prefecture_name, 'エリアCD': area_code, 'エリア名': area_name,'宿番号': href_values, '宿名': facility_name, 'プランCD':None, '部屋タイプCD':None,'掲載ページ':i}
                                         print(d)
-                                        if d['宿番号'] is not None or d['宿名'] is not None:
+                                        if (d['宿番号'] is not None or d['宿名'] is not None) and d['宿番号'] not in yado_seen:
                                                 yado_number.append(d)
+                                                yado_seen.add(d['宿番号'])
+                        if len(elems_yad_num) != len(elems_yad_name):
+                                print('警告: 宿番号要素数と宿名要素数が不一致です: 宿番号=' + str(len(elems_yad_num)) + ' 宿名=' + str(len(elems_yad_name)))
 
                         #href属性でURLから宿番号とプランCDを取得、リストに追加
 
                         for element in elems_yad_url:
-                                href_values = element.get('href')                     
-                                elem_values = str(element.get_text)
-
-                                start_plancd = elem_values.find('planCd=')+8
-                                start_roomcd = elem_values.find('roomTypeCd=')+12
-                                start_yadno = elem_values.find('yadNo=')+7
-
-                                if start_plancd == 7 or start_yadno == 6 :
-                                        pass
-                                else:
-                                        facility_code = mid(elem_values,start_yadno, 6)
-                                        plan_code = mid(elem_values,start_plancd, 8)
-                                        room_code = mid(elem_values,start_roomcd, 7)
-                                        print('宿番号：' + str(facility_code))
-                                        print('プランCD：' + str(plan_code))
-                                        print('部屋タイプCD：' + str(room_code))
-                                        if str.isdigit(facility_code) and str.isdigit(plan_code) and str.isdigit(room_code):
-                                                d2 = {'宿番号': facility_code, 'プランCD': plan_code, '部屋タイプCD': room_code}
-                                                if d2['宿番号'] is not None and d2['プランCD'] is not None and d2['部屋タイプCD'] is not None:
-                                                        print(d2)
-                                                        if len(yad_plan_url) == 0:
-                                                                yad_plan_url.append(d2)
-                                                        else:
-                                                                for index,yn in enumerate(yad_plan_url):
-                                                                        if yn['宿番号'] == facility_code:
-                                                                                break
-                                                                        if len(yad_plan_url)-1 == index:
-                                                                                yad_plan_url.append(d2)
+                                href_values = element.get('href') or ''
+                                params = parse_query_params(href_values)
+                                facility_code = normalize_code(params.get('yadNo', [None])[0], 6)
+                                plan_code = normalize_code(params.get('planCd', [None])[0], 8)
+                                room_code = normalize_code(params.get('roomTypeCd', [None])[0], 7)
+                                print('宿番号：' + str(facility_code))
+                                print('プランCD：' + str(plan_code))
+                                print('部屋タイプCD：' + str(room_code))
+                                if facility_code and plan_code and room_code:
+                                        d2 = {'宿番号': facility_code, 'プランCD': plan_code, '部屋タイプCD': room_code}
+                                        print(d2)
+                                        if facility_code not in yad_plan_map:
+                                                yad_plan_map[facility_code] = d2
         else:
                 pass
 print('宿番号' + str(len(yado_number)) + '件取得終了')
 print('------------------------------------------------')
 
-for y in yad_plan_url:
-        for x in yado_number:
-                if y['宿番号'] == x['宿番号']:
-                        x['プランCD'] = y['プランCD']
-                        x['部屋タイプCD'] = y['部屋タイプCD']
-                        break
+missing_plan_count = 0
+for x in yado_number:
+        plan_info = yad_plan_map.get(x['宿番号'])
+        if plan_info:
+                x['プランCD'] = plan_info['プランCD']
+                x['部屋タイプCD'] = plan_info['部屋タイプCD']
+        else:
+                missing_plan_count += 1
+
+print('プラン/部屋タイプ未取得件数: ' + str(missing_plan_count))
 
 
 print('予約件数取得開始')
 
 driver_path = config['settings']['driver_path']
 options = Options()
-# options.add_argument('--headless')
-driver = webdriver.Chrome(service=ChromeService(driver_path))
+if config.get('settings', {}).get('headless', True):
+        options.add_argument('--headless=new')
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--disable-gpu')
+driver = webdriver.Chrome(service=ChromeService(driver_path), options=options)
 # driver.maximize_window()
 
 for cryn in yado_number:
-        yad_number = format(cryn['宿番号'], '06') if cryn['宿番号'] is not None else print('')
-        plan_code = format(cryn['プランCD'], '08') if cryn['プランCD'] is not None else print('')
-        room_code = format(cryn['部屋タイプCD'], '07') if cryn['部屋タイプCD'] is not None else print('')
+        yad_number = normalize_code(cryn['宿番号'], 6)
+        plan_code = normalize_code(cryn['プランCD'], 8)
+        room_code = normalize_code(cryn['部屋タイプCD'], 7)
+        if not (yad_number and plan_code and room_code):
+                print('スキップ: 宿番号/プランCD/部屋タイプCDが不足しています: ' + str(cryn))
+                continue
         print('yad_number: ' + str(yad_number))
         print('plan_code: ' + str(plan_code))
         print('room_code: ' + str(room_code))
