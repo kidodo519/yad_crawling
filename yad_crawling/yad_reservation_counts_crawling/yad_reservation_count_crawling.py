@@ -145,7 +145,7 @@ def build_prefecture_area_targets(config):
     """
     新形式:
       code:
-        ken_code:
+        prefectures:
           兵庫県:
             ken_code: '280000'
             area_code:
@@ -161,11 +161,17 @@ def build_prefecture_area_targets(config):
           ...
     """
     targets = []
+    prefectures_map = config.get('code', {}).get('prefectures', {})
     ken_code_map = config.get('code', {}).get('ken_code', {})
 
-    for prefecture_name, prefecture_value in ken_code_map.items():
+    if prefectures_map:
+        source_map = prefectures_map
+    else:
+        source_map = ken_code_map
+
+    for prefecture_name, prefecture_value in source_map.items():
         if isinstance(prefecture_value, dict):
-            prefecture_code_raw = prefecture_value.get('ken_code')
+            prefecture_code_raw = prefecture_value.get('ken_code') or prefecture_value.get('code')
             area_code_map = prefecture_value.get('area_code', {})
         else:
             prefecture_code_raw = prefecture_value

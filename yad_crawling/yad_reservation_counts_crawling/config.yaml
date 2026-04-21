@@ -6,7 +6,7 @@ db:
  database: crawling_jln
 
 code:
- ken_code:
+ prefectures:
   兵庫県:
    ken_code: '280000'
    area_code:
