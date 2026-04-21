@@ -6,13 +6,14 @@ db:
  database: crawling_jln
 
 code:
- ken_code:
-  兵庫県: '280000'
- area_code:
-  城崎・竹野・豊岡: '281100'
-  姫路・赤穂・播磨: '280800'
-  神戸・有馬・明石: '280200'
-  淡路島: '281700'
+ prefectures:
+  兵庫県:
+   ken_code: '280000'
+   area_code:
+    城崎・竹野・豊岡: '281100'
+    姫路・赤穂・播磨: '280800'
+    神戸・有馬・明石: '280200'
+    淡路島: '281700'
 
 mappings:
   reservation_counts:
