@@ -129,6 +129,7 @@ def get_base_path():
 def load_config():
     base_path = get_base_path()
     config_path = os.path.join(base_path, 'config.yaml')
+    print('設定ファイル読込: ' + config_path)
     with open(config_path, 'r', encoding='utf-8') as fp:
         config = yaml.safe_load(fp)
     return base_path, config
@@ -251,9 +252,10 @@ for target in targets:
                                 if href_values is not None and str.isdigit(href_values):
                                         d = {'都道府県CD': prefecture_code, '都道府県': prefecture_name, 'エリアCD': area_code, 'エリア名': area_name,'宿番号': href_values, '宿名': facility_name, 'プランCD':None, '部屋タイプCD':None,'掲載ページ':i}
                                         print(d)
-                                        if (d['宿番号'] is not None or d['宿名'] is not None) and d['宿番号'] not in yado_seen:
+                                        unique_key = (d['エリアCD'], d['宿番号'])
+                                        if (d['宿番号'] is not None or d['宿名'] is not None) and unique_key not in yado_seen:
                                                 yado_number.append(d)
-                                                yado_seen.add(d['宿番号'])
+                                                yado_seen.add(unique_key)
                         if len(elems_yad_num) != len(elems_yad_name):
                                 print('警告: 宿番号要素数と宿名要素数が不一致です: 宿番号=' + str(len(elems_yad_num)) + ' 宿名=' + str(len(elems_yad_name)))
 
