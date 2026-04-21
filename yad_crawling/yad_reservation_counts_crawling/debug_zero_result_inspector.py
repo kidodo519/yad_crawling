@@ -1,6 +1,7 @@
 import datetime
 import io
 import os
+import sys
 import requests
 import yaml
 from bs4 import BeautifulSoup
@@ -17,6 +18,12 @@ def build_session(config):
     if override_headers:
         session.headers.update(override_headers)
     return session
+
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(__file__)
 
 
 def dump_response(debug_dir, file_prefix, response):
@@ -59,11 +66,10 @@ def dump_response(debug_dir, file_prefix, response):
 
 
 def main():
-    import sys
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-    base_path = os.path.dirname(__file__)
+    base_path = get_base_path()
     config_path = os.path.join(base_path, 'config.yaml')
     with open(config_path, 'r', encoding='utf-8') as fp:
         config = yaml.safe_load(fp)

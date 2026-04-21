@@ -119,13 +119,31 @@ def extract_facility_code(raw_url):
         return m.group(1)
     return None
 
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(__file__)
+
+
+def load_config():
+    base_path = get_base_path()
+    config_path = os.path.join(base_path, 'config.yaml')
+    with open(config_path, 'r', encoding='utf-8') as fp:
+        config = yaml.safe_load(fp)
+    return base_path, config
+
+
+def parse_count_text(raw_text):
+    if raw_text is None:
+        return 0
+    digits = ''.join(re.findall(r'\d+', str(raw_text)))
+    return int(digits) if digits else 0
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding = 'utf-8')
 
-base_path = os.path.dirname(__file__)
-config_path = os.path.join(base_path, 'config.yaml')
-with open(config_path, 'r', encoding='utf-8') as fp:
-        config = yaml.safe_load(fp)
+base_path, config = load_config()
 
 
 today_date = str(datetime.date.today())
@@ -152,8 +170,10 @@ for ac in list(config['code']['area_code']):
 
         #宿数取得（旅館0の場合pass）
         if elems_yad_count != []:
-                yado_count = str(elems_yad_count[0]).replace("<span class=\"jlnpc-listInformation--count\">", "").replace("</span>", "")
-                page_count = math.ceil(int(yado_count) / 30)
+                yado_count_text = elems_yad_count[0].get_text(strip=True)
+                yado_count = parse_count_text(yado_count_text)
+                page_count = math.ceil(yado_count / 30) if yado_count > 0 else 0
+                print('宿件数テキスト: ' + str(yado_count_text) + ' / 解析値: ' + str(yado_count))
 
                 #ページごとに宿番号取得
                 for i in range(1, page_count+1):
@@ -164,9 +184,10 @@ for ac in list(config['code']['area_code']):
                         elems_yad_url = soup_page.find_all(class_='p-searchResultItem__planName')
 
                         #data-href属性で宿番号を取得、リストに追加
-                        for element1, element2 in zip(elems_yad_num, elems_yad_name):
+                        for idx, element1 in enumerate(elems_yad_num):
                                 data_href = element1.get('data-href') or ''
                                 href_values = extract_facility_code(data_href)
+                                element2 = elems_yad_name[idx] if idx < len(elems_yad_name) else None
                                 facility_name = get_text_or_empty(element2)
                                 if href_values is not None and str.isdigit(href_values):
                                         d = {'都道府県CD': prefecture_code, '都道府県': prefecture_name, 'エリアCD': area_code, 'エリア名': area_name,'宿番号': href_values, '宿名': facility_name, 'プランCD':None, '部屋タイプCD':None,'掲載ページ':i}
@@ -174,6 +195,8 @@ for ac in list(config['code']['area_code']):
                                         if (d['宿番号'] is not None or d['宿名'] is not None) and d['宿番号'] not in yado_seen:
                                                 yado_number.append(d)
                                                 yado_seen.add(d['宿番号'])
+                        if len(elems_yad_num) != len(elems_yad_name):
+                                print('警告: 宿番号要素数と宿名要素数が不一致です: 宿番号=' + str(len(elems_yad_num)) + ' 宿名=' + str(len(elems_yad_name)))
 
                         #href属性でURLから宿番号とプランCDを取得、リストに追加
 
