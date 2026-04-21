@@ -142,6 +142,22 @@ def parse_count_text(raw_text):
     return int(digits) if digits else 0
 
 
+def extract_yado_count(soup):
+    selectors = [
+        '.jlnpc-listInformation--count',
+        '.p-searchResultTitle__count',
+    ]
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if node is None:
+            continue
+        text = node.get_text(strip=True)
+        count = parse_count_text(text)
+        if count > 0:
+            return count, text
+    return 0, ''
+
+
 def build_prefecture_area_targets(config):
     """
     新形式:
@@ -226,13 +242,9 @@ for target in targets:
         print('エリアCD: ' + str(area_code))
         mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1&yadHb=1'
         soup = fetch_soup(session, mainURL)
-        elems_yad_count = soup.find_all(class_='jlnpc-listInformation--count')
-
-        #宿数取得（旅館0の場合pass）
-        if elems_yad_count != []:
-                yado_count_text = elems_yad_count[0].get_text(strip=True)
-                yado_count = parse_count_text(yado_count_text)
-                page_count = math.ceil(yado_count / 30) if yado_count > 0 else 0
+        yado_count, yado_count_text = extract_yado_count(soup)
+        if yado_count > 0:
+                page_count = math.ceil(yado_count / 30)
                 print('宿件数テキスト: ' + str(yado_count_text) + ' / 解析値: ' + str(yado_count))
 
                 #ページごとに宿番号取得
@@ -276,7 +288,12 @@ for target in targets:
                                         if facility_code not in yad_plan_map:
                                                 yad_plan_map[facility_code] = d2
         else:
-                pass
+                page_title = soup.title.get_text(strip=True) if soup.title else ''
+                page_preview = soup.get_text(' ', strip=True)[:120]
+                print('警告: 宿件数要素が取得できませんでした')
+                print('対象エリアCD: ' + str(area_code))
+                print('title: ' + page_title)
+                print('preview: ' + page_preview)
 print('宿番号' + str(len(yado_number)) + '件取得終了')
 print('------------------------------------------------')
 
