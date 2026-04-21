@@ -140,6 +140,57 @@ def parse_count_text(raw_text):
     digits = ''.join(re.findall(r'\d+', str(raw_text)))
     return int(digits) if digits else 0
 
+
+def build_prefecture_area_targets(config):
+    """
+    新形式:
+      code:
+        ken_code:
+          兵庫県:
+            ken_code: '280000'
+            area_code:
+              城崎・竹野・豊岡: '281100'
+              ...
+
+    旧形式(後方互換):
+      code:
+        ken_code:
+          兵庫県: '280000'
+        area_code:
+          城崎・竹野・豊岡: '281100'
+          ...
+    """
+    targets = []
+    ken_code_map = config.get('code', {}).get('ken_code', {})
+
+    for prefecture_name, prefecture_value in ken_code_map.items():
+        if isinstance(prefecture_value, dict):
+            prefecture_code_raw = prefecture_value.get('ken_code')
+            area_code_map = prefecture_value.get('area_code', {})
+        else:
+            prefecture_code_raw = prefecture_value
+            area_code_map = config.get('code', {}).get('area_code', {})
+
+        prefecture_code = normalize_code(prefecture_code_raw, 6)
+        if prefecture_code is None:
+            print(f'警告: 都道府県コードが不正です: {prefecture_name} / {prefecture_code_raw}')
+            continue
+
+        for area_name, area_code_raw in area_code_map.items():
+            area_code = normalize_code(area_code_raw, 6)
+            if area_code is None:
+                print(f'警告: エリアコードが不正です: {prefecture_name} / {area_name} / {area_code_raw}')
+                continue
+
+            targets.append({
+                'prefecture_name': prefecture_name,
+                'prefecture_code': prefecture_code,
+                'area_name': area_name,
+                'area_code': area_code
+            })
+
+    return targets
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding = 'utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding = 'utf-8')
 
@@ -158,11 +209,13 @@ session = build_session(config)
 
 #ページ数取得
 print('宿番号取得開始')
-for ac in list(config['code']['area_code']):
-        prefecture_name = list(config['code']['ken_code'].keys())[0]
-        prefecture_code = format(config['code']['ken_code'][prefecture_name], '06')
-        area_code = format(config['code']['area_code'][ac], '06')
-        area_name = str(ac)
+targets = build_prefecture_area_targets(config)
+print('対象エリア数: ' + str(len(targets)))
+for target in targets:
+        prefecture_name = target['prefecture_name']
+        prefecture_code = target['prefecture_code']
+        area_code = target['area_code']
+        area_name = target['area_name']
         print('エリアCD: ' + str(area_code))
         mainURL = f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/?stayYear=&stayMonth=&stayDay=&dateUndecided=1&stayCount=1&roomCount=1&adultNum=2&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}&distCd=01&rootCd=04&yadRk=1&yadHb=1'
         soup = fetch_soup(session, mainURL)
