@@ -4,17 +4,20 @@ import io
 import os
 import re
 import sys
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import requests
 import yaml
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service as ChromeService
 
 DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
 }
-
+BLOCK_WORDS = ['アクセスを制限', '不正アクセス', 'Access Denied', 'captcha', 'reCAPTCHA', '回線が混み合って']
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
@@ -29,10 +32,12 @@ def get_base_path():
 def load_config():
     base_path = get_base_path()
     config_path = os.path.join(base_path, 'config.yaml')
+    if not os.path.exists(config_path):
+        config_path = os.path.join(os.getcwd(), 'config.yaml')
     print('設定ファイル読込: ' + config_path)
     with open(config_path, 'r', encoding='utf-8') as fp:
         config = yaml.safe_load(fp)
-    return base_path, config
+    return os.path.dirname(config_path), config
 
 
 def normalize_code(value, length):
@@ -52,10 +57,7 @@ def parse_count_text(raw_text):
 
 
 def extract_yado_count(soup):
-    selectors = [
-        '.jlnpc-listInformation--count',
-        '.p-searchResultTitle__count',
-    ]
+    selectors = ['.jlnpc-listInformation--count', '.p-searchResultTitle__count']
     for selector in selectors:
         node = soup.select_one(selector)
         if node is None:
@@ -71,7 +73,6 @@ def build_prefecture_area_targets(config):
     targets = []
     prefectures_map = config.get('code', {}).get('prefectures', {})
     ken_code_map = config.get('code', {}).get('ken_code', {})
-
     source_map = prefectures_map if prefectures_map else ken_code_map
 
     for prefecture_name, prefecture_value in source_map.items():
@@ -112,14 +113,50 @@ def build_session(config):
     return session
 
 
+def build_driver(config):
+    driver_path = config.get('settings', {}).get('driver_path')
+    if not driver_path:
+        return None
+
+    options = Options()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    try:
+        return webdriver.Chrome(service=ChromeService(driver_path), options=options)
+    except Exception as ex:
+        print('警告: Seleniumドライバ初期化失敗。requestsのみで継続します: ' + str(ex))
+        return None
+
+
 def fetch_soup(session, url):
     response = session.get(url, timeout=30)
     response.raise_for_status()
     soup = BeautifulSoup(response.content, 'html.parser')
     title = soup.title.get_text(strip=True) if soup.title else ''
     page_text = soup.get_text(' ', strip=True)
-    blocked = any(k in page_text for k in ['アクセスを制限', '不正アクセス', 'Access Denied', 'captcha', 'reCAPTCHA', '回線が混み合って'])
+    blocked = any(k in page_text for k in BLOCK_WORDS)
     return soup, title, blocked
+
+
+def fetch_soup_with_fallback(session, driver, url):
+    try:
+        soup, title, blocked = fetch_soup(session, url)
+        if not blocked:
+            return soup, title, blocked, 'requests'
+    except Exception as ex:
+        print('警告: requests取得失敗 URL=' + url + ' err=' + str(ex))
+
+    if driver is not None:
+        driver.get(url)
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        title = soup.title.get_text(strip=True) if soup.title else ''
+        page_text = soup.get_text(' ', strip=True)
+        blocked = any(k in page_text for k in BLOCK_WORDS)
+        return soup, title, blocked, 'selenium'
+
+    raise RuntimeError('requests/seleniumの両方で取得できませんでした: ' + url)
 
 
 def extract_facility_code(raw_url):
@@ -138,14 +175,13 @@ def extract_facility_code(raw_url):
 def parse_query_params(url):
     if not url:
         return {}
-    query = urlparse(url).query
-    return parse_qs(query)
+    return parse_qs(urlparse(url).query)
 
 
 def main():
     base_path, config = load_config()
     session = build_session(config)
-
+    driver = build_driver(config)
     targets = build_prefecture_area_targets(config)
     print('対象エリア数: ' + str(len(targets)))
 
@@ -164,21 +200,18 @@ def main():
             f'&ypFlg=1&kenCd={prefecture_code}&screenId=UWW1380&roomCrack=200000&lrgCd={area_code}'
             f'&distCd=01&rootCd=04&yadRk=1&yadHb=1'
         )
-        soup, title, blocked = fetch_soup(session, main_url)
-
+        soup, title, blocked, fetch_mode = fetch_soup_with_fallback(session, driver, main_url)
         if blocked:
             print(f'警告: 制限/混雑ページの可能性 エリア={area_name} URL={main_url} title={title}')
 
         yado_count, yado_count_text = extract_yado_count(soup)
-        print(f'エリア={area_name} ({area_code}) 件数テキスト={yado_count_text} 解析件数={yado_count}')
-
+        print(f'エリア={area_name} ({area_code}) 取得={fetch_mode} 件数テキスト={yado_count_text} 解析件数={yado_count}')
         if yado_count <= 0:
             preview = soup.get_text(' ', strip=True)[:120]
             print(f'警告: 宿件数が取得できません エリア={area_name} title={title} preview={preview}')
             continue
 
         page_count = (yado_count + 29) // 30
-
         for page in range(1, page_count + 1):
             page_url = (
                 f'https://www.jalan.net/{prefecture_code}/LRG_{area_code}/page{page}.html'
@@ -186,9 +219,9 @@ def main():
                 f'&stayCount=1&roomCount=1&dateUndecided=1&adultNum=2&roomCrack=200000&kenCd={prefecture_code}'
                 f'&lrgCd={area_code}&vosFlg=6&idx={(page - 1) * 30}&yadRk=1&yadHb=1'
             )
-            soup_page, page_title, page_blocked = fetch_soup(session, page_url)
+            soup_page, page_title, page_blocked, page_fetch_mode = fetch_soup_with_fallback(session, driver, page_url)
             if page_blocked:
-                print(f'警告: 一覧ページで制限/混雑の可能性 エリア={area_name} page={page} title={page_title}')
+                print(f'警告: 一覧ページで制限/混雑の可能性 エリア={area_name} page={page} 取得={page_fetch_mode} title={page_title}')
 
             elems_yad_num = soup_page.find_all(class_='jlnpc-yadoCassette__link')
             elems_yad_name = soup_page.find_all('h2', class_='p-searchResultItem__facilityName')
@@ -196,30 +229,22 @@ def main():
 
             plan_map = {}
             for element in elems_yad_url:
-                href_values = element.get('href') or ''
-                params = parse_query_params(href_values)
+                params = parse_query_params(element.get('href') or '')
                 facility_code = normalize_code(params.get('yadNo', [None])[0], 6)
                 plan_code = normalize_code(params.get('planCd', [None])[0], 8)
                 room_code = normalize_code(params.get('roomTypeCd', [None])[0], 7)
                 if facility_code and plan_code and room_code and facility_code not in plan_map:
-                    plan_map[facility_code] = {
-                        'plan_code': plan_code,
-                        'room_type_code': room_code,
-                    }
+                    plan_map[facility_code] = {'plan_code': plan_code, 'room_type_code': room_code}
 
             for idx, elem in enumerate(elems_yad_num):
                 facility_code = extract_facility_code(elem.get('data-href') or '')
-                if not facility_code or not facility_code.isdigit():
+                if not facility_code:
                     continue
-
-                facility_name = ''
-                if idx < len(elems_yad_name):
-                    facility_name = elems_yad_name[idx].get_text(strip=True)
-
                 key = (area_code, facility_code)
                 if key in seen:
                     continue
 
+                facility_name = elems_yad_name[idx].get_text(strip=True) if idx < len(elems_yad_name) else ''
                 plan_info = plan_map.get(facility_code, {})
                 facilities.append({
                     '取得日時UTC': datetime.datetime.utcnow().isoformat(timespec='seconds'),
@@ -234,6 +259,9 @@ def main():
                     '一覧URL': page_url,
                 })
                 seen.add(key)
+
+    if driver is not None:
+        driver.quit()
 
     output_path = os.path.join(base_path, 'debug_facility_list.csv')
     fields = ['取得日時UTC', '都道府県CD', '都道府県', 'エリアCD', 'エリア名', '宿番号', '宿名', 'プランCD', '部屋タイプCD', '一覧URL']
